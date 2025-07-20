@@ -1,12 +1,12 @@
 import User from "../models/user.model.js";
-import { encryptMessage } from '../utils/encryptMessage.js';
-import { decryptMessage } from '../utils/decryptMessage.js';
-import { ApiError } from '../utils/ApiError.js';
+import { encryptMessage } from "../utils/encryptMessage.js";
+import { decryptMessage } from "../utils/decryptMessage.js";
+import { ApiError } from "../utils/ApiError.js";
 import twilio from "twilio";
 import mongoose from "mongoose";
 import jwt from "jsonwebtoken";
 import { Transaction } from "../models/transaction.model.js";
-import {updateWalletBalance} from "../utils/walletTransactionService.js"
+import { updateWalletBalance } from "../utils/walletTransactionService.js";
 import { SmsLog } from "../models/smsLog.model.js";
 const twilioClient = twilio(
   process.env.TWILIO_ACCOUNT_SID,
@@ -14,20 +14,24 @@ const twilioClient = twilio(
 );
 
 // Centralized response function to maintain consistency
-const sendSmsResponse = async (phone, message) => {
+const sendSmsResponse = async (phone, message, statusCode, success) => {
+  message = {
+    message,
+    status: statusCode,
+    success,
+  };
+  message = JSON.stringify(message);
   try {
     await twilioClient.messages.create({
       body: await encryptMessage(message),
       from: process.env.TWILIO_PHONE_NUMBER,
       to: `+91${phone}`,
     });
-    
 
     return true;
   } catch (error) {
     console.error("SMS sending error:", error);
     if (phone) {
-      
     }
     return false;
   }
@@ -47,15 +51,12 @@ const generateAccessToken = async (userId) => {
     if (!user) {
       throw new ApiError(404, "User not found");
     }
-    
+
     const accessToken = await user.generateAccessToken();
     await user.save({ validateBeforeSave: false });
     return accessToken;
   } catch (error) {
-    throw new ApiError(
-      500,
-      error.message || "Error generating access token"
-    );
+    throw new ApiError(500, error.message || "Error generating access token");
   }
 };
 
@@ -63,16 +64,16 @@ const generateAccessToken = async (userId) => {
 const verifyToken = async (token) => {
   try {
     if (!token) return null;
-    
+
     // Implementation depends on your token verification logic
     // This is a placeholder for the actual verification
     const userToken = jwt.verify(token, process.env.ACCESS_TOKEN_SECRET);
-console.log(userToken)
+    console.log(userToken);
     const user = await User.findById(userToken._id);
     return user;
   } catch (error) {
     console.log(error.message);
-	  return null;
+    return null;
   }
 };
 
@@ -83,34 +84,43 @@ const smsControllers = {
       const messageString = req.data?.trim() || "";
       const parts = messageString.split(" ");
       console.log(parts);
-      
+
       // Extract phone from the message - expected format: "LOGIN <phone> <password>"
       const from = extractPhone(req.body?.From || parts[1]);
-	console.log(from)      
+      console.log(from);
       if (!from || parts.length < 3) {
         await sendSmsResponse(
           from || req.body?.From,
-          "Invalid format. Please send: LOGIN <password>"
+          "Invalid format. Please send: LOGIN <password>",
+          400,
+          false
         );
         return res.status(200).send();
       }
 
       const password = parts[2]?.trim();
       console.log(password);
-     console.log(from);
+      console.log(from);
       // Find user and verify credentials
       const user = await User.findOne({ phone: from });
       if (!user) {
         await sendSmsResponse(
           from,
-          "Phone number not registered. Please register first."
+          "Phone number not registered. Please register first.",
+          404,
+          false
         );
         return res.status(200).send();
       }
 
       const isPasswordValid = await user.isPasswordCorrect(password);
       if (!isPasswordValid) {
-        await sendSmsResponse(from, "Invalid password. Please try again.");
+        await sendSmsResponse(
+          from,
+          "Invalid password. Please try again.",
+          401,
+          false
+        );
         return res.status(200).send();
       }
 
@@ -122,7 +132,9 @@ const smsControllers = {
 
       await sendSmsResponse(
         from,
-        `Your login OTP is: ${otp}. Reply with "VERIFY ${otp}" to complete login.`
+        `Your login OTP is: ${otp}. Reply with "VERIFY ${otp}" to complete login.`,
+        200,
+        true
       );
 
       return res.status(200).send();
@@ -137,21 +149,28 @@ const smsControllers = {
     try {
       const messageBody = req.data?.trim() || "";
       const parts = messageBody.split(" ");
-      
+
       // Extract phone and OTP - expected format: "VERIFY <otp>"
       const from = extractPhone(req.body?.From);
-      
+
       if (!from || parts.length < 2) {
         await sendSmsResponse(
           from || req.body?.From,
-          "Invalid format. Please send: VERIFY <yourOTP>"
+          "Invalid format. Please send: VERIFY <yourOTP>",
+          400,
+          false
         );
         return res.status(200).send();
       }
-      
+
       const otp = parseInt(parts[1]?.trim(), 10);
       if (isNaN(otp)) {
-        await sendSmsResponse(from, "Invalid OTP format. Please try again.");
+        await sendSmsResponse(
+          from,
+          "Invalid OTP format. Please try again.",
+          400,
+          false
+        );
         return res.status(200).send();
       }
 
@@ -160,19 +179,19 @@ const smsControllers = {
       if (!user) {
         await sendSmsResponse(
           from,
-          "Phone number not registered. Please register first."
+          "Phone number not registered. Please register first.",
+          404,
+          false
         );
         return res.status(200).send();
       }
 
-      if (
-        user.otp !== otp ||
-        !user.otpExpiry ||
-        user.otpExpiry < new Date()
-      ) {
+      if (user.otp !== otp || !user.otpExpiry || user.otpExpiry < new Date()) {
         await sendSmsResponse(
           from,
-          "Invalid or expired OTP. Please request a new one."
+          "Invalid or expired OTP. Please request a new one.",
+          401,
+          false
         );
         return res.status(200).send();
       }
@@ -189,7 +208,7 @@ const smsControllers = {
         `AUTH ${accessToken} BALANCE ${user.walletBalance.toFixed(2)}`
       );
 
-      await sendSmsResponse(from, encryptedMessage);
+      await sendSmsResponse(from, encryptedMessage, 200, true);
       return res.status(200).send();
     } catch (error) {
       console.error("OTP controller error:", error);
@@ -197,74 +216,106 @@ const smsControllers = {
     }
   },
 
-
-  paymentController: async   (req, res)=> {
+  paymentController: async (req, res) => {
     const session = await mongoose.startSession();
     session.startTransaction();
-  
+
     try {
       const messageBody = req.data?.trim() || "";
       const parts = messageBody.split(" ");
-  
+
       // Format: PAY <amount> <receiver_phone> <description> <token>
-      const senderPhone = req.sanitizedPhone || req.body?.From.replace(/^\+/, "").replace(/\D/g, "");
-  
+      const senderPhone =
+        req.sanitizedPhone ||
+        req.body?.From.replace(/^\+/, "").replace(/\D/g, "");
+
       if (!senderPhone || parts.length < 3) {
         await sendSmsResponse(
           senderPhone,
-          "Invalid format. Use: PAY <amount> <receiver_phone> <description> <token>"
+          "Invalid format. Use: PAY <amount> <receiver_phone> <description> <token>",
+          400,
+          false
         );
         return res.status(200).send();
       }
-  
+
       const amount = parseFloat(parts[1]?.trim());
-      const receiverPhone = parts[2]?.trim().replace(/^\+/, "").replace(/\D/g, "");
+      const receiverPhone = parts[2]
+        ?.trim()
+        .replace(/^\+/, "")
+        .replace(/\D/g, "");
       const description = parts[3]?.trim() || "Payment";
       const token = parts.length > 4 ? parts[4]?.trim() : null;
-  
+
       if (isNaN(amount) || amount <= 0) {
-        await sendSmsResponse(senderPhone, "Invalid amount. Must be a positive number.");
+        await sendSmsResponse(
+          senderPhone,
+          "Invalid amount. Must be a positive number.",
+          400,
+          false
+        );
         return res.status(200).send();
       }
-  
-      const sender = token 
-        ? await verifyToken(token) 
+
+      const sender = token
+        ? await verifyToken(token)
         : await User.findOne({ phone: senderPhone }).session(session);
-  
+
       if (!sender) {
-        await sendSmsResponse(senderPhone, "Authentication failed. Please login first.");
+        await sendSmsResponse(
+          senderPhone,
+          "Authentication failed. Please login first.",
+          400,
+          false
+        );
         await session.abortTransaction();
         session.endSession();
         return res.status(200).send();
       }
-  
+
       if (sender.walletBalance < amount) {
         await sendSmsResponse(
           senderPhone,
-          `Insufficient balance. Your current balance is ₹${sender.walletBalance.toFixed(2)}`
+          `Insufficient balance. Your current balance is ₹${sender.walletBalance.toFixed(2)}`,
+          400,
+          false
         );
         await session.abortTransaction();
         session.endSession();
         return res.status(200).send();
       }
-  
-      const receiver = await User.findOne({ phone: receiverPhone }).session(session);
+
+      const receiver = await User.findOne({ phone: receiverPhone }).session(
+        session
+      );
       if (!receiver) {
-        await sendSmsResponse(senderPhone, "Receiver not found. Please check the number.");
+        await sendSmsResponse(
+          senderPhone,
+          "Receiver not found. Please check the number.",
+          400,
+          false
+        );
         await session.abortTransaction();
         session.endSession();
         return res.status(200).send();
       }
-  
+
       if (sender._id.toString() === receiver._id.toString()) {
-        await sendSmsResponse(senderPhone, "You cannot send a payment to yourself.");
+        await sendSmsResponse(
+          senderPhone,
+          "You cannot send a payment to yourself.",
+          400,
+          false
+        );
         await session.abortTransaction();
         session.endSession();
         return res.status(200).send();
       }
-  
-      const paymentId = `PAY${Date.now()}${Math.floor(Math.random() * 1000).toString().padStart(3, '0')}`;
-  
+
+      const paymentId = `PAY${Date.now()}${Math.floor(Math.random() * 1000)
+        .toString()
+        .padStart(3, "0")}`;
+
       const transaction = new Transaction({
         senderId: sender._id,
         receiverUpi: receiver.upiId || `PHONE:${receiverPhone}`,
@@ -274,9 +325,9 @@ const smsControllers = {
         status: "pending",
         reference: `Payment to ${receiver.name || receiver.phone}: ${description}`,
       });
-  
+
       await transaction.save({ session });
-  
+
       // Update sender wallet (debit)
       const senderWalletResult = await updateWalletBalance(
         sender._id,
@@ -286,7 +337,7 @@ const smsControllers = {
         `Payment to ${receiver.name || receiver.phone}: ${description}`,
         session
       );
-  
+
       // Update receiver wallet (credit)
       const receiverWalletResult = await updateWalletBalance(
         receiver._id,
@@ -296,46 +347,47 @@ const smsControllers = {
         `Payment from ${sender.name || sender.phone}: ${description}`,
         session
       );
-  
+
       transaction.status = "success";
       await transaction.save({ session });
-  
+
       await session.commitTransaction();
       session.endSession();
-  
+
       await sendSmsResponse(
         senderPhone,
-        `Payment of ₹${amount.toFixed(2)} sent to ${receiver.name || receiver.phone}. Your new balance: ₹${senderWalletResult.balance.toFixed(2)}`
+        `Payment of ₹${amount.toFixed(2)} sent to ${receiver.name || receiver.phone}. Your new balance: ₹${senderWalletResult.balance.toFixed(2)}`,
+        200,
+        true
       );
       await twilioClient.messages.create({
         body: `You received ₹${amount.toFixed(2)} from ${sender.name || sender.phone}. Your new balance: ₹${receiverWalletResult.balance.toFixed(2)}`,
         from: process.env.TWILIO_PHONE_NUMBER,
         to: `+91${receiverPhone}`,
       });
-  
+
       return res.status(200).send();
     } catch (error) {
       await session.abortTransaction();
       session.endSession();
       console.error("Payment controller error:", error);
-  
+
       try {
         const from = req.body?.From;
         if (from) {
-          await twilioClient.messages.create({
-            body: await encryptMessage("Error occurred while processing payment. Please try again later."),
-            from: process.env.TWILIO_PHONE_NUMBER,
-            to: `+91${from}`,
-          });
+          await sendSmsResponse(
+            from,
+            "Error occurred while processing payment. Please try again later.",
+            501,
+            false);
         }
       } catch (notifyError) {
         console.error("SMS error notification failed:", notifyError);
       }
-  
+
       return res.status(200).send();
     }
   },
-
 
   // // Balance check controller
   // balanceController: async (req, res) => {
@@ -372,10 +424,10 @@ const smsControllers = {
     try {
       const messageBody = req.data?.trim() || "";
       const parts = messageBody.split(" ");
-      
+
       // Extract authentication token - expected format: "TRANSFER <amount> <upiId> <description> <token>"
       const from = extractPhone(req.body?.From);
-      
+
       if (!from || parts.length < 4) {
         await sendSmsResponse(
           from || req.body?.From,
@@ -388,22 +440,28 @@ const smsControllers = {
       const recipientUPI = parts[2]?.trim();
       const description = parts[3]?.trim() || "UPI Transfer";
       const token = parts.length > 4 ? parts[4]?.trim() : null;
-      
+
       if (isNaN(amount) || amount <= 0) {
         await sendSmsResponse(
           from,
-          "Invalid amount. Please specify a positive number."
+          "Invalid amount. Please specify a positive number.",
+          400,
+          false
         );
         return res.status(200).send();
       }
 
       // Verify sender's token
-      const sender = token ? await verifyToken(token) : await User.findOne({ phone: from });
-      
+      const sender = token
+        ? await verifyToken(token)
+        : await User.findOne({ phone: from });
+
       if (!sender) {
         await sendSmsResponse(
           from,
-          "Authentication failed. Please login again."
+          "Authentication failed. Please login again.",
+          401,
+          false
         );
         return res.status(200).send();
       }
@@ -412,7 +470,9 @@ const smsControllers = {
       if (sender.walletBalance < amount) {
         await sendSmsResponse(
           from,
-          `Insufficient balance. Your current balance is ${sender.walletBalance.toFixed(2)}`
+          `Insufficient balance. Your current balance is ${sender.walletBalance.toFixed(2)}`,
+          402,
+          false
         );
         return res.status(200).send();
       }
@@ -422,7 +482,9 @@ const smsControllers = {
       if (!recipient) {
         await sendSmsResponse(
           from,
-          "Recipient UPI ID not found. Please check the UPI ID."
+          "Recipient UPI ID not found. Please check the UPI ID.",
+          404,
+          false
         );
         return res.status(200).send();
       }
@@ -439,7 +501,7 @@ const smsControllers = {
         amount,
         description,
         type: "UPI_TRANSFER",
-        timestamp: new Date()
+        timestamp: new Date(),
       });
 
       await Promise.all([sender.save(), recipient.save(), transaction.save()]);
@@ -447,13 +509,17 @@ const smsControllers = {
       // Notify sender
       await sendSmsResponse(
         from,
-        `UPI transfer of ${amount.toFixed(2)} sent to ${recipient.name} (${recipientUPI}). Your new balance: ${sender.walletBalance.toFixed(2)}`
+        `UPI transfer of ${amount.toFixed(2)} sent to ${recipient.name} (${recipientUPI}). Your new balance: ${sender.walletBalance.toFixed(2)}`,
+        200,
+        true
       );
 
       // Notify recipient
       await sendSmsResponse(
         recipient.phone,
-        `You received ${amount.toFixed(2)} via UPI from ${sender.name} (${from}). Your new balance: ${recipient.walletBalance.toFixed(2)}`
+        `You received ${amount.toFixed(2)} via UPI from ${sender.name} (${from}). Your new balance: ${recipient.walletBalance.toFixed(2)}`,
+        200,
+        true
       );
 
       return res.status(200).send();
@@ -467,7 +533,7 @@ const smsControllers = {
   helpController: async (req, res) => {
     try {
       const from = extractPhone(req.body?.From);
-      
+
       if (!from) {
         return res.status(200).send();
       }
@@ -480,7 +546,9 @@ const smsControllers = {
 - PAY <amount> <phone> <description>: Make payment
 - BALANCE: Check wallet balance
 - TRANSFER <amount> <upiId> <description>: UPI transfer
-- HELP: Show this help menu`
+- HELP: Show this help menu`,
+        200,
+        true
       );
 
       return res.status(200).send();
