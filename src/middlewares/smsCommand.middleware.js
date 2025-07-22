@@ -68,10 +68,10 @@ export const smsCommandRouterMiddleware = (controllers) => {
         });
         return res.status(200).send();
       }
-      
+
       if (!user.sessionKeyExpiry || Date.now() > user.sessionKeyExpiry) {
         await twilioClient.messages.create({
-          body: "Session expired. Please LOGIN again to start a new session.",
+          body: "Session expired. Please LOGIN online again to start a new session.",
           from: process.env.TWILIO_PHONE_NUMBER,
           to: `+91${from}`,
         });
@@ -88,7 +88,7 @@ export const smsCommandRouterMiddleware = (controllers) => {
       } catch (decryptionError) {
         console.error("Decryption failed:", decryptionError.message);
         await twilioClient.messages.create({
-          body: "Invalid session. Please LOGIN again.",
+          body: "Invalid session. Please LOGIN online again.",
           from: process.env.TWILIO_PHONE_NUMBER,
           to: `+91${from}`,
         });

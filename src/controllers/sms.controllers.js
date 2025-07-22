@@ -82,44 +82,44 @@ const smsControllers = {
       const from = extractPhone(req.body?.From || parts[1]);
       console.log(from);
       if (!from || parts.length < 3) {
-        await sendSmsResponse(
-          from || req.body?.From,
-          "Invalid format. Please send: LOGIN <password>",
-          400,
-          false
-        );
+        await twilioClient.messages.create({
+          body: "Invalid format. Please send: LOGIN <password>",
+          from: process.env.TWILIO_PHONE_NUMBER,
+          to: `+91${from}`,
+        });
+        
         return res.status(200).send();
       }
 
       const password = parts[2]?.trim();
       const user = await User.findOne({ phone: from });
       if (!user) {
-        console.log("Phone number not registered. Please register first.");
+        await twilioClient.messages.create({
+          body: "Phone number not registered. Please register first.",
+          from: process.env.TWILIO_PHONE_NUMBER,
+          to: `+91${from}`,
+        });
         
-        await sendSmsResponse(
-          from,
-          "Phone number not registered. Please register first.",
-          404,
-          false
-        );
         return res.status(200).send();
       }
 
       const isPasswordValid = await user.isPasswordCorrect(password);
       if (!isPasswordValid) {
-        console.log("Invalid password. Please try again.");
-
-        await sendSmsResponse(
-          from,
-          "Invalid password. Please try again.",
-          401,
-          false
-        );
+        await twilioClient.messages.create({
+          body: "Invalid password. Please try again.",
+          from: process.env.TWILIO_PHONE_NUMBER,
+          to: `+91${from}`,
+        });
+        
         return res.status(200).send();
       }
       if(!user.sessionKey || !user.sessionKeyExpiry || user.sessionKeyExpiry < Date.now()){
-
-        await sendSmsResponse(from, `Session expired. Please login again in online mode to generate a new secure session.`, 400, false);
+        await twilioClient.messages.create({
+          body: "Session expired. Please login again in online mode to generate a new secure session.",
+          from: process.env.TWILIO_PHONE_NUMBER,
+          to: `+91${from}`,
+        });
+        
         user.sessionKey = undefined;
         user.sessionKeyExpiry = undefined;
         await user.save();
@@ -131,12 +131,12 @@ const smsControllers = {
         user.otp = otp;
         user.otpExpiry = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
         await user.save();
-        await sendSmsResponse(
-        from,
-        `Your login OTP is: ${otp}. Reply with "VERIFY ${otp}" to complete login.`,
-        200,
-        true
-      );
+        await twilioClient.messages.create({
+          body: `Your login OTP is: ${otp}. Reply with "VERIFY ${otp}" to complete login.`,
+          from: process.env.TWILIO_PHONE_NUMBER,
+          to: `+91${from}`,
+        });
+        
       }
       return res.status(200).send();
     } catch (error) {
@@ -154,45 +154,45 @@ const smsControllers = {
       const from = extractPhone(req.body?.From);
 
       if (!from || parts.length < 2) {
-        await sendSmsResponse(
-          from || req.body?.From,
-          "Invalid format. Please send: VERIFY <yourOTP>",
-          400,
-          false
-        );
+        await twilioClient.messages.create({
+          body: `Invalid format. Please send: VERIFY <yourOTP>`,
+          from: process.env.TWILIO_PHONE_NUMBER,
+          to: `+91${from}`,
+        });
+        
         return res.status(200).send();
       }
 
       const otp = parseInt(parts[1]?.trim(), 10);
       if (isNaN(otp)) {
-        await sendSmsResponse(
-          from,
-          "Invalid OTP format. Please try again.",
-          400,
-          false
-        );
+        await twilioClient.messages.create({
+          body: "Invalid OTP format. Please try again.",
+          from: process.env.TWILIO_PHONE_NUMBER,
+          to: `+91${from}`,
+        });
+        
         return res.status(200).send();
       }
 
       // Find user and verify OTP
       const user = await User.findOne({ phone: from });
       if (!user) {
-        await sendSmsResponse(
-          from,
-          "Phone number not registered. Please register first.",
-          404,
-          false
-        );
+        await twilioClient.messages.create({
+          body: "Phone number not registered. Please register first.",
+          from: process.env.TWILIO_PHONE_NUMBER,
+          to: `+91${from}`,
+        });
+        
         return res.status(200).send();
       }
 
       if (user.otp !== otp || !user.otpExpiry || user.otpExpiry < new Date()) {
-        await sendSmsResponse(
-          from,
-          "Invalid or expired OTP. Please request a new one.",
-          401,
-          false
-        );
+        await twilioClient.messages.create({
+          body: "Invalid or expired OTP. Please request a new one.",
+          from: process.env.TWILIO_PHONE_NUMBER,
+          to: `+91${from}`,
+        });
+       
         return res.status(200).send();
       }
 
@@ -201,7 +201,6 @@ const smsControllers = {
 
       const accessToken = await generateAccessToken(user._id);
       await user.save();
-      console.log(accessToken);
       
       await sendSmsResponse(from, `AUTH ${accessToken} BALANCE ${user.walletBalance.toFixed(2)}`, 200, true);
       return res.status(200).send();
