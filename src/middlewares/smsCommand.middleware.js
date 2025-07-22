@@ -2,7 +2,7 @@ import { decryptMessage } from "../utils/decryptMessage.js";
 import rateLimit from "express-rate-limit";
 import twilio from "twilio";
 import { SmsLog } from "../models/smsLog.model.js";
-
+import User from "../models/user.model.js";
 const twilioClient = twilio(
   process.env.TWILIO_ACCOUNT_SID,
   process.env.TWILIO_AUTH_TOKEN
@@ -37,45 +37,74 @@ export const smsRateLimiter = rateLimit({
   },
 });
 
-// Main SMS command router middleware
 export const smsCommandRouterMiddleware = (controllers) => {
   return async (req, res, next) => {
     try {
-      // Extract the message body from the request
       console.log("SMS");
       const incomingBody = req.body?.Body || "";
       let from = req.body?.From;
       console.log(from);
       if (from.startsWith("+91")) {
-        from = from.slice(3); // removes first 3 characters
+        from = from.slice(3);
       }
       req.body.From = from;
-      console.log("SMS");
       console.log(incomingBody);
       if (!incomingBody || !from) {
         return res.status(200).send(); // Empty message, just acknowledge
       }
 
-      // Store the original message for logging/debugging
       req.originalMessage = incomingBody.trim();
-      // Process the message - attempt decryption if necessary
-      let messageBody = req.originalMessage;
+      const user = await User.findOne(
+        { phone: from },
+        { sessionKey: 1, sessionKeyExpiry: 1 }
+      );
 
-      messageBody = await decryptMessage(messageBody);
+      if (!user) {
+        // User not registered
+        await twilioClient.messages.create({
+          body: "You are not registered. Please register first.",
+          from: process.env.TWILIO_PHONE_NUMBER,
+          to: `+91${from}`,
+        });
+        return res.status(200).send();
+      }
+      
+      if (!user.sessionKeyExpiry || Date.now() > user.sessionKeyExpiry) {
+        await twilioClient.messages.create({
+          body: "Session expired. Please LOGIN again to start a new session.",
+          from: process.env.TWILIO_PHONE_NUMBER,
+          to: `+91${from}`,
+        });
+        return res.status(200).send();
+      }
 
-      // Store processed message in request object
+      // Decryption
+      let messageBody;
+      try {
+        messageBody = await decryptMessage(
+          req.originalMessage,
+          user.sessionKey
+        );
+      } catch (decryptionError) {
+        console.error("Decryption failed:", decryptionError.message);
+        await twilioClient.messages.create({
+          body: "Invalid session. Please LOGIN again.",
+          from: process.env.TWILIO_PHONE_NUMBER,
+          to: `+91${from}`,
+        });
+        return res.status(200).send();
+      }
+
+      console.log(messageBody);
+
       req.data = messageBody;
 
-      // Extract command - first word in the message
       const command = messageBody.split(" ")[0].toUpperCase();
 
-      // Sanitize phone number
       req.sanitizedPhone = extractPhone(from);
 
-      // Add command to request for logging/metrics
       req.smsCommand = command;
 
-      // Route to appropriate controller based on command
       switch (command) {
         case "LOGIN":
           return controllers.loginController(req, res);
@@ -96,25 +125,22 @@ export const smsCommandRouterMiddleware = (controllers) => {
           return controllers.helpController(req, res);
 
         default:
-          // Handle unknown command
           await twilioClient.messages.create({
             body: "Unrecognized command. Reply HELP for available commands.",
             from: process.env.TWILIO_PHONE_NUMBER,
-            to: from,
+            to: `+91${from}`,
           });
           return res.status(200).send();
       }
     } catch (error) {
       console.error("SMS command router error:", error);
-
-      // Try to notify user of error if possible
       try {
         const from = req.body?.From;
         if (from) {
           await twilioClient.messages.create({
             body: "Sorry, an error occurred processing your request. Please try again later.",
             from: process.env.TWILIO_PHONE_NUMBER,
-            to: from,
+            to: `+91${from}`,
           });
           await SmsLog.create({
             phoneNumber: extractPhone(from),
@@ -128,7 +154,7 @@ export const smsCommandRouterMiddleware = (controllers) => {
         console.error("Error notification failed:", notifyError);
       }
 
-      return res.status(200).send(); // Always acknowledge to Twilio
+      return res.status(200).send();
     }
   };
 };

@@ -19,7 +19,7 @@ import smsRouter from "./routes/sms.routes.js"
 
 
 // routes
-app.use("/api/sms/",smsRouter)
+app.use("/api/sms",smsRouter)
 app.use("/api/user", userRouter);
 app.use("/api/razor", razorRouter);
 export default app;

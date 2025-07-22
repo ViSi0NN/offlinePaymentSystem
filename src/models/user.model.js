@@ -19,6 +19,12 @@ const userSchema = new mongoose.Schema({
     type: String,
     required: true
   },
+  sessionKey: {
+    type: String,
+  },
+  sessionKeyExpiry:{
+    type:Date
+  },
   createdAt: { type: Date, default: Date.now },
 });
 
