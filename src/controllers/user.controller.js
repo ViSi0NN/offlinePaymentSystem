@@ -5,7 +5,8 @@ import { asyncHandler } from "../utils/asyncHandler.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
 import crypto from "crypto"; 
 import { ApiError } from "../../src/utils/ApiError.js";
-
+import { Transaction } from "../models/transaction.model.js";
+import mongoose from "mongoose"
 
 const twilioClient = twilio(
   process.env.TWILIO_ACCOUNT_SID,
@@ -161,7 +162,7 @@ async function verifyAppOtp(req, res) {
     user.sessionKeyExpiry = new Date(Date.now() + 24 * 60 * 60 * 1000);
     const token = await generateAccessToken(user._id);
     await user.save();
-
+	console.log(user);
     res.status(200).json({
       success: true,
       message: "Login successful",
@@ -172,7 +173,7 @@ async function verifyAppOtp(req, res) {
         name: user.name,
         phone: user.phone,
         upiId: user.upiId,
-        walletBalance: user.walletBalance,
+        walletBalance: user?.walletBalance,
       },
     });
   } catch (error) {
@@ -181,6 +182,64 @@ async function verifyAppOtp(req, res) {
   }
 }
 
-// Auth middleware to check Bearer token
+const isValidObjectId = mongoose.Types.ObjectId.isValid;
 
-export { registerUser, appLogin, verifyAppOtp, checkBalance };
+async function fetchTransactions(req, res) {
+  try {
+    const userId = req.query?.userId;
+
+    if (!userId || !isValidObjectId(userId)) {
+      return res.status(400).json({ success: false, message: "Valid User ID is required" });
+    }
+
+    const transactions = await Transaction.find({
+      $or: [{ senderId: userId }, { receiverId: userId }]
+    })
+      .sort({ createdAt: -1 })
+      .limit(10)
+      .populate({ path: "senderId", select: "phone" })
+      .populate({ path: "receiverId", select: "phone" });
+
+    const formatted = transactions.map(txn => {
+      const isSender = txn.senderId?._id?.toString() === userId;
+      return {
+        senderPhone: txn.senderId?.phone ?? null,
+        receiverPhone: txn.receiverId?.phone ?? txn.receiverUpi ?? null,
+        amount: txn.amount,
+        status: isSender ? "sent" : "received",
+        time: txn.createdAt
+      };
+    });
+
+    return res.status(200).json({ success: true, transactions: formatted });
+  } catch (error) {
+    console.error("Transaction fetch error:", error);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+}
+async function logoutUser(req, res) {
+  try {
+    const userId = req.body.userId;
+    console.log(userId)
+    // Check if userId exists and is a valid ObjectId
+    if (!userId || !isValidObjectId(userId)) {
+      return res.status(400).json({ success: false, message: "Invalid user ID" });
+    }
+
+    const user = await User.findByIdAndUpdate(
+      userId,
+      { $unset: { sessionKey: "", sessionKeyExpiry: "" } },
+      { new: true }
+    );
+
+    if (!user) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+
+    return res.status(200).json({ success: true, message: "Logout successful" });
+  } catch (error) {
+    console.error("Logout error:", error);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+}
+export { registerUser, appLogin, verifyAppOtp, checkBalance, fetchTransactions, logoutUser };

@@ -23,17 +23,14 @@ const sendSmsResponse = async (phone, message, statusCode, success) => {
   sessionKey = user.sessionKey;
   message = JSON.stringify(message);
   try {
-    await twilioClient.messages.create({
+  let res = await twilioClient.messages.create({
       body: await encryptMessage(message, sessionKey),
       from: process.env.TWILIO_PHONE_NUMBER,
       to: `+91${phone}`,
     });
-
     return true;
   } catch (error) {
     console.error("SMS sending error:", error);
-    if (phone) {
-    }
     return false;
   }
 };
@@ -201,8 +198,13 @@ const smsControllers = {
 
       const accessToken = await generateAccessToken(user._id);
       await user.save();
-      
-      await sendSmsResponse(from, `AUTH ${accessToken} BALANCE ${user.walletBalance.toFixed(2)}`, 200, true);
+	await twilioClient.messages.create({
+        body: `${accessToken} ${user?.walletBalance.toFixed(2)}`,
+        from: process.env.TWILIO_PHONE_NUMBER,
+        to: `+91${from}`,
+      });
+	
+	//      await sendSmsResponse(from, `AUTH ${accessToken} BALANCE ${user.walletBalance.toFixed(2)}`, 200, true);
       return res.status(200).send();
     } catch (error) {
       console.error("OTP controller error:", error);
